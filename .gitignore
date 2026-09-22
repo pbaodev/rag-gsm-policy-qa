@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Du lieu sinh ra tu ingest/index - tai tao lai bang lenh trong CLAUDE.md,
+# khong phai nguon (Buoc 1: "File goc truoc, Markdown la ban dan xuat").
+# Neo bang "/" o dau - khong neo se khop ca rag_gsm/index/ (module that,
+# phat hien 2026-09-22: bug that, rag_gsm/index/*.py bi git bo qua tu dau).
+/data/
+/index/
+/eval/runs/

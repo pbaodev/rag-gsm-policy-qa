@@ -1,0 +1,230 @@
+# Kiến trúc code (trước khi build)
+
+Tài liệu này khác các file trong `docs/learning/`: không brainstorm lại quyết định (đã chốt ở Bước 0–9), chỉ định hình "cài đặt thế nào" — cấu trúc thư mục, interface dùng chung giữa các module, config. Mục tiêu: `ingest` không phải sửa lại khi `index`/`retrieve` cần một kiểu dữ liệu khác.
+
+## Cấu trúc thư mục
+
+```
+rag_gsm/
+  config.py            # đọc config/*.toml
+  schemas.py           # Document, Chunk, RetrievalCandidate, RetrievalResult, TraceInfo, Answer, Citation
+  ingest/
+    web.py              # httpx + fetch __NEXT_DATA__ (hoac HTML tho khi trang khong co JSON)
+    heading.py           # dung heading tu so thu tu (1. / 1.1. / 1.1.1.) - o day, khong phai chunk/,
+                         # vi "dung heading" la viec cua ingest (Buoc 1); chunk chi quyet dinh RANH GIOI chunk
+    extractors/         # 1 file/loai trang: general.py, privacy.py, faq.py, ewallet.py, insurance.py
+    ocr.py               # Docling cho 56 ảnh Quy chế hoạt động
+    normalize.py         # NFC, content_hash, regex ngay_hieu_luc, ghi front matter
+  chunk/
+    loader.py             # doc lai data/markdown/*.md (front matter + than) thanh Document
+    rules.py              # quy tac gom/tach chunk theo nhom: faq, dieu_khoan, bang, quy_che; gan doi_tuong theo khoan
+    run.py                # chay rules tren toan bo data/markdown/*.md, ghi data/chunks/<doc_id>.jsonl
+  index/
+    embedder.py           # Embedder (Protocol) + bge-m3 impl
+    dense_store.py         # LanceDB
+    bm25_store.py           # bm25s, âm tiết bỏ dấu
+    build.py                # dựng lại index/public, index/internal từ data/chunks
+  retrieve/
+    hybrid.py                # RRF
+    rerank.py                  # CrossEncoder wrapper
+    fallback.py                 # outline + LLM chọn node (PageIndex)
+    reorder.py                   # sandwich
+  generate/
+    llm_adapter.py                # LLMAdapter (Protocol) + OllamaAdapter, ClaudeAdapter
+    prompt.py                      # ghép prompt, parse [n], map citation
+  ui/
+    app.py                          # Streamlit
+  eval/
+    metrics.py                      # Recall@k, MRR
+    judge.py                          # LLM-judge, rubric 4 tiêu chí
+    run.py                            # chạy golden_questions.jsonl, ghi eval/runs/<config_id>.jsonl
+
+config/
+  default.toml
+data/            # layout đã chốt ở Bước 1, 4
+index/
+eval/
+  golden_questions.jsonl
+  runs/
+docs/
+  kien-truc-code.md   # file này
+  learning/
+tests/
+  test_heading.py, test_ingest.py, test_bm25.py, test_lancedb_filter.py, test_rrf.py, ...
+pyproject.toml
+```
+
+`uv` + Python 3.12 (Bước 0); một package `rag_gsm`, không tách nhiều repo.
+
+## Interface dùng chung
+
+Các dataclass này là "hợp đồng" giữa module — đổi field ở đây nghĩa là đổi ở mọi module dùng nó, nên chốt trước khi code lan ra nhiều nơi. Tên field giữ đúng như đã chốt trong `docs/learning/` (không đặt lại tên).
+
+```python
+# schemas.py
+
+@dataclass
+class Document:              # đầu ra ingest, đầu vào chunk — front matter Bước 1
+    doc_id: str
+    source: str
+    title: str
+    doc_type: str             # faq | dieu_khoan | chinh_sach | quy_che | bao_hiem
+    audience: str              # khach_hang | noi_bo
+    nguon_tin_cay: str          # chinh_thuc | bao_chi | cong_dong | noi_bo
+    fetched_at: str
+    content_hash: str
+    ngay_hieu_luc: str | None
+    markdown_path: str
+
+@dataclass
+class Chunk:                  # đầu ra chunk, đầu vào index — metadata Bước 2
+    chunk_id: str              # "general#3.2", "faq#3.6"
+    doc_id: str
+    parent_id: str | None
+    doc_type: str
+    heading_path: str
+    breadcrumb: str             # "Văn bản › mục › khoản" — dùng cho embed, BM25, outline fallback
+    text: str                    # nội dung chunk, KHÔNG kèm breadcrumb
+    so_muc: str | None
+    doi_tuong: str                # nguoi_dung | doi_tac | chung
+    audience: str
+    nguon_tin_cay: str
+    ngay_hieu_luc: str | None
+    trang_bat_dau: int | None
+    trang_ket_thuc: int | None
+    loai_chunk: str                 # faq | dieu_khoan | bang | generic
+    source: str
+    token_count: int
+
+    def text_to_index(self) -> str:
+        return f"{self.breadcrumb}\n{self.text}"   # breadcrumb đứng đầu (Bước 2)
+
+class Embedder(Protocol):            # Bước 3 — giấu prefix/instruction riêng từng model
+    def embed_documents(self, texts: list[str]) -> np.ndarray: ...
+    def embed_query(self, text: str) -> np.ndarray: ...
+
+@dataclass
+class RetrievalCandidate:             # một chunk qua các tầng điểm — để trace panel (Bước 8)
+    chunk_id: str
+    dense_score: float | None = None
+    dense_rank: int | None = None
+    bm25_score: float | None = None
+    bm25_rank: int | None = None
+    rrf_score: float | None = None
+    rerank_score: float | None = None    # đã sigmoid, 0–1 (Bước 5)
+
+@dataclass
+class TraceInfo:                       # toàn bộ dữ liệu nội bộ 1 lượt truy vấn (Bước 8)
+    branch: Literal["hybrid", "pageindex_fallback", "khong_biet"]
+    candidates_before_rerank: list[RetrievalCandidate] = field(default_factory=list)
+    candidates_after_rerank: list[RetrievalCandidate] = field(default_factory=list)
+    threshold: float = 0.0
+    fallback_outline_size: int | None = None
+    fallback_node_list: list[dict] | None = None     # [{chunk_id, trich_dan}] — Bước 6
+    citation_map: dict[int, str] = field(default_factory=dict)   # n -> chunk_id
+    latency_ms: dict[str, float] = field(default_factory=dict)
+
+@dataclass
+class RetrievalResult:                 # đầu ra Bước 5/6, đầu vào Bước 7
+    branch: str
+    chunks: list[Chunk]                 # đã reorder (sandwich), tối đa K=3
+    trace: TraceInfo
+
+@dataclass
+class Citation:
+    n: int
+    chunk_id: str
+    source: str
+    heading_path: str
+    trang: int | None = None
+
+@dataclass
+class Answer:                           # đầu ra Bước 7, đầu vào UI + eval
+    text: str                            # có [n] inline
+    citations: list[Citation]
+    branch: str
+
+class LLMAdapter(Protocol):              # Bước 0 adapter mỏng — Ollama dev, Claude khi cần chất lượng
+    def generate(self, system: str, user: str) -> str: ...
+    def generate_json(self, system: str, user: str, schema_hint: str) -> dict: ...  # PageIndex node_list, LLM-judge
+
+@dataclass
+class GoldenQuestion:                     # Bước 9
+    id: str
+    cau_hoi: str
+    chu_de: str
+    do_kho: str
+    nhanh_ky_vong: str                     # hybrid | pageindex_fallback | khong_biet
+    gold_chunk_ids: list[str]
+    gold_answer: str
+    ghi_chu: str = ""
+
+@dataclass
+class JudgeVerdict:                        # Bước 9 — rubric 4 tiêu chí tách rời
+    question_id: str
+    dung_noi_dung: bool
+    groundedness: float                     # 0–1
+    citation_dung: bool
+    khong_biet_dung_luc: bool
+    ghi_chu: str = ""
+```
+
+## Config (`config/default.toml`)
+
+Không hard-code model/tham số trong code — mọi thứ "chờ eval" ở Bước 9 nằm ở đây, để bake-off chỉ cần đổi file config, không sửa code.
+
+```toml
+[embedding]
+model = "BAAI/bge-m3"
+
+[bm25]
+k1 = 1.5
+b = 0.75
+
+[rrf]
+k = 60
+top_n_per_branch = 20
+
+[rerank]
+model = "AITeamVN/Vietnamese_Reranker"
+top_k_into_rerank = 10
+
+[context]
+final_k = 3
+reorder = true
+
+[fallback]
+model = "ollama:qwen3:4b"        # hoặc "claude:<model-id>"
+excerpt_chars = 200                # N ký tự đầu chunk trong outline — CHƯA CHỐT, xem Bước 6
+
+[generation]
+model = "ollama:qwen3:4b"
+temperature = 0.15
+
+[thresholds]
+rerank_pass = 0.5                   # PLACEHOLDER — phải hiệu chỉnh ở Bước 9, không dùng số này để kết luận gì
+```
+
+Đọc bằng `tomllib` (built-in từ Python 3.11), không cần thêm thư viện.
+
+## Task list: `ingest` (đã code, 2026-09-22)
+
+Sửa lớn so với bản kế hoạch ban đầu: hầu hết trang là JSON sạch trong `__NEXT_DATA__`, không phải DOM cần cạo — xem `docs/learning/01-ingestion.md` (mục sửa 2026-09-22) để biết vì sao. `doi_tuong` **không** phải việc của ingest — đó là nhãn theo khoản, gán lúc **chunk** (Bước 2), sau khi đã có heading; ingest chỉ tạo Markdown có heading đúng để chunk dựa vào.
+
+1. `web.py` — `httpx` fetch + regex lấy `<script id="__NEXT_DATA__">…</script>`, `json.loads`. ✅ Xong.
+2. `heading.py` — tách dòng theo `\r\n`, nhận `1.`→H1, `1.1.`→H2, `1.1.1.`→H3; **lột thẻ HTML inline trước khi so khớp** (`<strong>`, `<i>`, `<a href>`→Markdown link) — một số Phụ lục đánh dấu tiêu đề bằng `<strong>` thay vì dòng số trần, phát hiện khi chạy thật, không đoán trước được. ✅ Xong, có test.
+3. `normalize.py` — NFC, `content_hash` (sha256), regex `ngay_hieu_luc`, ghép front matter YAML. ✅ Xong, có test.
+4. `extractors/general.py` — `generalTerms.generalItems[]` (16 phần tử) → 15 `Document` (bỏ `[12]`, trùng `privacy.py`). ✅ Xong.
+5. `extractors/privacy.py` — `privacyNotice.privacyItems[]` (14 mục đã đánh số + đặt tên sẵn). ✅ Xong.
+6. `extractors/insurance.py` — `insuranceData.{columns, rows}`; `columns` là chuỗi nối `"|"`, `rows` là dict `{value1, value2, …}` theo vị trí, **không phải list cột** như đoán ban đầu. ✅ Xong.
+7. `extractors/faq.py` — `contentFaq.setUpFaq`, lọc nhóm "Dành cho người dùng" (49 câu, 6 danh mục); lột HTML khỏi câu hỏi/câu trả lời (link `<a href>` trỏ sang trang Bảo hiểm). ✅ Xong.
+8. `run.py` — chạy 4 extractor trên, ghi `data/markdown/<doc_id>.md`. ✅ Xong.
+9. **Chưa làm:** `ocr.py` (56 ảnh Quy chế hoạt động → Docling), tìm lại "Điều khoản ví E-Green" (URL cũ không còn), và ghi `data/raw/{web,images}/` (hiện `web.py` chỉ fetch trong bộ nhớ, không lưu HTML gốc — lệch với quyết định "giữ file gốc" ở Bước 1, xem `CLAUDE.md` "Known loose ends").
+
+### Test đã viết
+
+`tests/test_heading.py`, `tests/test_normalize.py`, `tests/test_insurance_extractor.py` — dùng đoạn mẫu chép tay từ dữ liệu thật (không toàn văn), phong theo đúng các bug đã gặp (tiêu đề bọc `<strong>`, `columns` là chuỗi không phải list) để không tái phát khi refactor. Chưa có test cho `extractors/general.py` (cần mạng); nếu muốn test không cần mạng, thêm fixture JSON rút gọn vào `tests/fixtures/`.
+
+## Khi nào cập nhật file này
+
+Chỉ khi đổi **hợp đồng** giữa module (thêm/bớt field, đổi kiểu). Đổi số trong `config/default.toml` không cần sửa file này — đó là việc của Bước 9 bake-off.

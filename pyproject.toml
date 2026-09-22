@@ -1,0 +1,17 @@
+[project]
+name = "rag-gsm"
+version = "0.1.0"
+description = "Mini RAG pipeline cho chinh sach GSM (Green SM) - du an hoc"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx>=0.28",
+    "numpy>=2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

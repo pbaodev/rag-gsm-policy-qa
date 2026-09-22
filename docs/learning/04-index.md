@@ -1,6 +1,8 @@
 # Bước 4: Index (vector store + BM25)
 
-Corpus vài trăm đến vài nghìn chunk. Ở quy mô này kho vector không phải nút thắt: quét phẳng 2.000 vector × 1024 chiều mất 3 ms (LanceDB) hoặc 0,2 ms (numpy).
+Corpus vài trăm đến vài nghìn chunk (thật: 337 chunk / 18 tài liệu, đo 2026-09-22 sau khi code `chunk`). Ở quy mô này kho vector không phải nút thắt: quét phẳng 2.000 vector × 1024 chiều mất 3 ms (LanceDB) hoặc 0,2 ms (numpy).
+
+**Code thật 2026-09-22:** đã dựng `index/public/{lancedb,bm25}/` từ 337 chunk. Kiểm tay câu "hủy chuyến xe có bị trừ tiền không" trên corpus thật: BM25 ra `faq#3.6` rồi `faq#2.16` sát nhau — đúng ca hòa điểm đã đo ở bài thử 161-chunk bên dưới, dù corpus và điểm số tuyệt đối khác (bài thử cũ dùng corpus nhỏ hơn, chưa có 15 Phụ lục).
 
 ## Chốt
 

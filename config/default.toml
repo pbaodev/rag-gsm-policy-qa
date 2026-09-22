@@ -1,0 +1,29 @@
+[embedding]
+model = "BAAI/bge-m3"
+
+[bm25]
+k1 = 1.5
+b = 0.75
+
+[rrf]
+k = 60
+top_n_per_branch = 20
+
+[rerank]
+model = "AITeamVN/Vietnamese_Reranker"
+top_k_into_rerank = 10
+
+[context]
+final_k = 3
+reorder = true
+
+[fallback]
+model = "ollama:qwen3:4b"
+excerpt_chars = 200
+
+[generation]
+model = "ollama:qwen3:4b"
+temperature = 0.15
+
+[thresholds]
+rerank_pass = 0.5

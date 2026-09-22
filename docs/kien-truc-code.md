@@ -243,6 +243,17 @@ Sửa lớn so với bản kế hoạch ban đầu: hầu hết trang là JSON s
 
 337 chunk, không chunk nào vượt 500 token sau khi tách hết có thể; median 142 token, p90 ~453. Riêng FAQ: 52 chunk (49 câu gốc + 3 câu bị tách vì quá dài), median 152, p90 417 — khớp sát số đo cũ (median 160, p90 415) dù tokenizer và pipeline đã đổi.
 
+## Task list: `index` (đã code, 2026-09-22)
+
+Thêm `config/default.toml` + `rag_gsm/config.py` (đọc bằng `tomllib`) thật ở bước này — trước đó chỉ là kế hoạch trong tài liệu này. Cài `sentence-transformers`, `lancedb`, `bm25s`, `torch` — đúng phiên bản đã ghi ở `docs/learning/03-embedding.md`/`04-index.md` (sentence-transformers 6.1.0, torch 2.14.0, lancedb 0.39.0, bm25s 0.3.11), không cần đổi số nào.
+
+1. `embedder.py` — `Bge3Embedder` (bge-m3 qua sentence-transformers, MPS nếu có, `normalize_embeddings=True` để cosine = dot product). Không prefix, đúng chốt Bước 3. ✅ Xong, chưa có test (cần tải trọng số model ~2,27 GB — cùng loại giới hạn với `extractors/general.py` chưa test vì cần mạng).
+2. `dense_store.py` — LanceDB, metric cosine, `prefilter=True` tường minh mọi truy vấn có lọc; bảng phẳng (`chunk_id`, `vector`, tất cả field của `Chunk`, `text_embed` = `text_to_index()`) thay vì gói metadata vào 1 cột JSON — để lọc được bằng SQL (`doi_tuong IN (...)`). ✅ Xong, có test (prefilter, similarity = 1 − `_distance`, cách ly public/internal bằng cấu trúc).
+3. `bm25_store.py` — bm25s, tách âm tiết bỏ dấu tự viết (`unicodedata` NFD + bỏ ký tự category Mn; `đ`→`d` phải map tay vì không tách được bằng NFD). Lưu `corpus=chunk_ids` khi `save()` để `retrieve()` trả thẳng `chunk_id` thay vì số thứ tự. ✅ Xong, có test.
+4. `build.py` — đọc `data/chunks/*.jsonl`, tách theo `audience` (`khach_hang`→`index/public/`, `noi_bo`→`index/internal/`) **trước khi** embed/build — cách ly bằng cấu trúc chứ không chỉ bằng cột lọc, đúng invariant CLAUDE.md. ✅ Xong.
+
+Kiểm tra bằng tay trên dữ liệu thật: câu "hủy chuyến xe có bị trừ tiền không" — BM25 ra `faq#3.6` rồi `faq#2.16` sát nhau (khớp đúng ca hòa điểm đã ghi ở `04-index.md`, dù corpus thật 337 chunk khác corpus thử nghiệm 161 chunk khi viết tài liệu đó).
+
 ## Khi nào cập nhật file này
 
 Chỉ khi đổi **hợp đồng** giữa module (thêm/bớt field, đổi kiểu). Đổi số trong `config/default.toml` không cần sửa file này — đó là việc của Bước 9 bake-off.

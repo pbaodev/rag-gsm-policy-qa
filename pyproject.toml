@@ -4,8 +4,11 @@ version = "0.1.0"
 description = "Mini RAG pipeline cho chinh sach GSM (Green SM) - du an hoc"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "bm25s>=0.3.11",
     "httpx>=0.28",
+    "lancedb>=0.39.0",
     "numpy>=2.0",
+    "sentence-transformers>=6.1.0",
     "transformers>=5.17.0",
 ]
 

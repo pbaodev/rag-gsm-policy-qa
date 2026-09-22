@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository state
 
-All 10 brainstorm docs (`docs/learning/00`–`09`) are done and the module architecture is fixed in `docs/kien-truc-code.md`. Code has started: `ingest` (`rag_gsm/ingest/`) and `chunk` (`rag_gsm/chunk/`) are real, working against live greensm.com data, and produce `data/chunks/*.jsonl` (337 chunks / 18 documents). `index`, `retrieve`, `generate`, `ui`, `eval` are not written yet — their contracts exist as `Protocol`/dataclass stubs in `rag_gsm/schemas.py` but no implementation.
+All 10 brainstorm docs (`docs/learning/00`–`09`) are done and the module architecture is fixed in `docs/kien-truc-code.md`. Code has started: `ingest`, `chunk`, and `index` (`rag_gsm/{ingest,chunk,index}/`) are real, working against live greensm.com data end to end — 337 chunks / 18 documents, embedded with bge-m3 and stored in `index/public/{lancedb,bm25}/`. `retrieve`, `generate`, `ui`, `eval` are not written yet — their contracts exist as `Protocol`/dataclass stubs in `rag_gsm/schemas.py` but no implementation.
 
 Check `CAPABILITY-MAP.md`'s progress table and `docs/kien-truc-code.md` before assuming a design question is open — most are already decided there, with reasons and rejected alternatives.
 
@@ -20,9 +20,10 @@ uv run pytest                            # run all tests (currently ingest-only,
 uv run pytest tests/test_heading.py -v   # run one test file
 uv run python -m rag_gsm.ingest.run      # fetch live greensm.com JSON, write data/markdown/*.md
 uv run python -m rag_gsm.chunk.run       # read data/markdown/*.md, write data/chunks/<doc_id>.jsonl
+uv run python -m rag_gsm.index.build     # read data/chunks/*.jsonl, embed with bge-m3, write index/{public,internal}/{lancedb,bm25}/
 ```
 
-`data/` and `.venv/` are working state, not committed source — `uv run python -m rag_gsm.ingest.run` regenerates `data/markdown/` from the live site any time; `uv run python -m rag_gsm.chunk.run` regenerates `data/chunks/` from `data/markdown/` (no network needed for this one).
+`data/`, `index/`, and `.venv/` are working state, not committed source — `uv run python -m rag_gsm.ingest.run` regenerates `data/markdown/` from the live site any time; `uv run python -m rag_gsm.chunk.run` regenerates `data/chunks/` from `data/markdown/` (no network needed); `uv run python -m rag_gsm.index.build` regenerates `index/` from `data/chunks/` (no network needed, but downloads bge-m3 weights ~2.27 GB on first run, cached by Hugging Face afterward).
 
 ## Working on the learning docs
 
@@ -80,7 +81,7 @@ These were each paid for with a measurement or a bug, and they cut across module
 - **Source trust is a label**, `nguon_tin_cay` (`chinh_thuc` / `bao_chi` / `cong_dong` / `noi_bo`); only official sources are indexed by default.
 - **Keep the originals.** `data/raw/` is source of truth, Markdown is derived, so changing converters never means re-crawling or re-OCRing. `content_hash` skips unchanged documents.
 - **Chunk ids are stable and citable**: `<doc>#<number>` (`general#3.2`, `faq#3.6`), a merged chunk spans a range (`general#3.2-3.4`). Citation is source URL + heading path, plus page number for image/PDF-derived text.
-- **Every parameter needs an eval number**, not a guess — chunk size, k, thresholds, tokenizer, embedding model (bake-off on the GSM question set including one API model as a ceiling). Step 9 should also include a "stuff the whole corpus into the prompt" baseline: the text corpus is only ~40k tokens, so RAG has to earn its place.
+- **Every parameter needs an eval number**, not a guess — chunk size, k, thresholds, tokenizer, embedding model (bake-off on the GSM question set including one API model as a ceiling). Step 9 should also include a "stuff the whole corpus into the prompt" baseline: the text corpus is ~68–74k tokens, so RAG has to earn its place.
 
 ### Data layout
 
@@ -88,10 +89,12 @@ These were each paid for with a measurement or a bug, and they cut across module
 rag_gsm/schemas.py                Document, Chunk, Embedder/LLMAdapter protocols, etc. — shared contracts, see docs/kien-truc-code.md
 rag_gsm/ingest/                   web.py (fetch + __NEXT_DATA__, now also saves raw HTML to data/raw/web/), heading.py, normalize.py, extractors/{general,privacy,insurance,faq}.py, run.py
 rag_gsm/chunk/                    loader.py (read data/markdown/*.md back into Document), rules.py, run.py
+rag_gsm/index/                    embedder.py (Bge3Embedder), dense_store.py (LanceDB), bm25_store.py, build.py
+rag_gsm/config.py                 reads config/default.toml (tomllib) — embedding model, bm25 k1/b, RRF/rerank/context/fallback/generation params, thresholds
 data/raw/{web,images,internal}/   originals — web/ populated (4 HTML files) by ingest/web.py; images/ and internal/ not populated yet (no OCR, no internal docs yet)
 data/markdown/<doc_id>.md         derived, with YAML front matter (source, doc_type, audience, nguon_tin_cay, fetched_at, content_hash, ngay_hieu_luc) — regenerate with `uv run python -m rag_gsm.ingest.run`
 data/chunks/<doc_id>.jsonl        chunker output, index input — regenerate with `uv run python -m rag_gsm.chunk.run` (337 chunks / 18 documents as of 2026-09-22)
-index/public/{lancedb,bm25}/      dense table + BM25 index — not built yet
+index/public/{lancedb,bm25}/      dense table (bge-m3, cosine) + BM25 index — regenerate with `uv run python -m rag_gsm.index.build`; index/internal/ only appears once internal (audience=noi_bo) chunks exist
 ```
 
 ## Known loose ends
@@ -100,3 +103,5 @@ index/public/{lancedb,bm25}/      dense table + BM25 index — not built yet
 - "Điều khoản ví E-Green" — page not found at its documented URL nor inside `generalItems`; still unresolved.
 - Whether/how to index the 3,774 news articles — not decided.
 - The 14-section privacy notice (`chinh-sach-du-lieu-ca-nhan`) mixes many subject categories (customers, staff, shareholders, partners) that don't map cleanly onto the `nguoi_dung`/`doi_tac`/`chung` split `doi_tuong` labelling was designed for (that split is really about "Quy định chung" mixing customer vs. partner *obligations*). `chunk_dieu_khoan()` still runs the same regex on it; spot-check its labelling before trusting it for retrieval filtering.
+- `rag_gsm/index/embedder.py` has no offline test (downloading bge-m3 weights ~2.27 GB is the same kind of network-dependent cost that leaves `extractors/general.py` untested) — `dense_store.py`/`bm25_store.py` are tested with fake/small vectors instead, which covers the plumbing (prefilter, similarity math, save/load) but not the real model's behavior.
+- `index/internal/` isolation is only exercised with a synthetic 2-chunk fixture in `tests/test_dense_store.py` — there's no real `audience=noi_bo` chunk yet to build it against end to end.

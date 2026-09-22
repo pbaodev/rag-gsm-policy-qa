@@ -1,6 +1,6 @@
 # Capability Map: Mini RAG Pipeline (tiếng Việt)
 
-Trạng thái: **đã duyệt** 2026-09-21. Cập nhật 2026-09-21: đổi miền từ pháp luật hộ kinh doanh sang chính sách GSM; đã kiểm kê nguồn greensm.com. Cập nhật 2026-09-22 (sáng): bắt đầu code `ingest`; kiểm kê lại greensm.com bằng dữ liệu thật thay vì HTML tĩnh — hầu hết nội dung nằm trong `__NEXT_DATA__` (JSON), không phải DOM; corpus thật ~70 nghìn token (trước ước lượng ~40 nghìn) — sửa `01-ingestion.md`, `02-chunking.md`, `03-embedding.md`, `06-pageindex-fallback.md`.
+Trạng thái: **đã duyệt** 2026-09-21. Cập nhật 2026-09-21: đổi miền từ pháp luật hộ kinh doanh sang chính sách GSM; đã kiểm kê nguồn greensm.com. Cập nhật 2026-09-22 (sáng): bắt đầu code `ingest`; kiểm kê lại greensm.com bằng dữ liệu thật thay vì HTML tĩnh — hầu hết nội dung nằm trong `__NEXT_DATA__` (JSON), không phải DOM; corpus thật ~70 nghìn token (trước ước lượng ~40 nghìn) — sửa `01-ingestion.md`, `02-chunking.md`, `03-embedding.md`, `06-pageindex-fallback.md`. Cập nhật 2026-09-22 (chiều): code `chunk`, chạy trên 18 tài liệu thật ra 337 chunk; sửa lỗi gán `doi_tuong` theo đoạn văn cho tài liệu không có heading; số đo median/p90 trong `02-chunking.md` được thay bằng số thật.
 
 | Module id | Trách nhiệm | Phụ thuộc |
 |---|---|---|
@@ -31,7 +31,7 @@ Kiến trúc code (cấu trúc thư mục, interface, config) trước khi build
 |---|---|---|
 | 0 Nền móng | xong | [00-nen-mong.md](docs/learning/00-nen-mong.md) |
 | 1 Ingestion (collect + convert) | xong; sửa lớn 2026-09-22 (JSON thay DOM); tin tức tính sau | [01-ingestion.md](docs/learning/01-ingestion.md) |
-| 2 Chunking | xong | [02-chunking.md](docs/learning/02-chunking.md) |
+| 2 Chunking | xong; code thật 2026-09-22, số đo thay bằng số thật (337 chunk/18 tài liệu) | [02-chunking.md](docs/learning/02-chunking.md) |
 | 3 Embedding | xong | [03-embedding.md](docs/learning/03-embedding.md) |
 | 4 Index (vector store + BM25) | xong | [04-index.md](docs/learning/04-index.md) |
 | 5 Retrieval (hybrid, RRF, rerank) | xong | [05-retrieval.md](docs/learning/05-retrieval.md) |

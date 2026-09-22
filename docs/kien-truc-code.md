@@ -225,6 +225,24 @@ Sửa lớn so với bản kế hoạch ban đầu: hầu hết trang là JSON s
 
 `tests/test_heading.py`, `tests/test_normalize.py`, `tests/test_insurance_extractor.py` — dùng đoạn mẫu chép tay từ dữ liệu thật (không toàn văn), phong theo đúng các bug đã gặp (tiêu đề bọc `<strong>`, `columns` là chuỗi không phải list) để không tái phát khi refactor. Chưa có test cho `extractors/general.py` (cần mạng); nếu muốn test không cần mạng, thêm fixture JSON rút gọn vào `tests/fixtures/`.
 
+## Task list: `chunk` (đã code, 2026-09-22)
+
+Đếm token bằng chính tokenizer bge-m3 (`transformers.AutoTokenizer`, không cần torch, chỉ tokenize) — không dùng ước lượng từ/token, vì `02-chunking.md` đã ghi rõ số đo cũ (median/p90) chỉ đo trên `generalItems[0]` và cần đo lại khi code chunk thật.
+
+1. `loader.py` — đọc lại front matter (`key: value`, chuỗi dạng Python repr) + thân Markdown từ file `.md` ingest đã ghi. ✅ Xong, có test.
+2. `rules.py` — dựng cây từ heading `#`/`##`/`###` (độ sâu = số `#`, không giả định H1 luôn có mặt — `phu-luc-07` chỉ có H2 vì tiêu đề cấp 1 viết "ĐIỀU N." thay vì "N.", ngoài khuôn mà `heading.py` nhận, chunk vẫn chạy đúng vì không đoán lại cấp cha). Với mỗi nhóm cấp 1: thử cả nhóm làm 1 chunk nếu vừa ngân sách và không trộn `doi_tuong`; nếu không, gom khoản cấp 2 liên tiếp cùng nhãn (không bao giờ trộn khác nhãn dù vẫn vừa ngân sách — invariant, không phải tối ưu kích thước). FAQ: 1 câu hỏi = 1 chunk cố định, chỉ tách khi vượt ngân sách. Bảng bảo hiểm: cả bảng 1 chunk + viết lại hàng thành câu. ✅ Xong, có test.
+3. `run.py` — chạy trên 18 tài liệu, ghi `data/chunks/<doc_id>.jsonl`. ✅ Xong.
+4. **Chưa làm:** `quy_che` (56 ảnh OCR — chờ `ocr.py`).
+
+### Bug thật tìm thấy khi chạy trên dữ liệu thật (không đoán trước được)
+
+- Gán nhãn `doi_tuong` theo **từng đoạn văn** cho tài liệu không có heading nào (`phu-luc-01/13/15` — văn xuôi liên tục, không đánh số) xé một mạch văn thành hàng chục chunk vô nghĩa (có chunk 2 token, vd chỉ `"Phần B – Các điều khoản bổ sung"`) vì các đoạn liên tiếp xen kẽ nhắc "Người dùng"/"Đối tác" trong một quy trình duy nhất. Sửa: ranh giới `doi_tuong` chỉ áp dụng cho khoản có số thứ tự **thật** của tài liệu (`node.children` khác rỗng); văn bản không đánh số chỉ gom theo kích thước, gán nhãn sau khi đã gom.
+- Cụm dẫn nhập cố định ("Đối với Đối Tác", "Nếu Bạn là Người dùng" — dự kiến ở `02-chunking.md`) không khớp cách viết thật (`"4.1. Người dùng phải tuân thủ..."`, `"4.2. Đối tác phải tuân thủ..."`) — đổi sang nhận diện theo **sự có mặt** của "đối tác" / "người dùng"|"khách hàng" trong chính văn bản khoản.
+
+### Kết quả đo thật (18 tài liệu, thay số tạm ở `02-chunking.md`)
+
+337 chunk, không chunk nào vượt 500 token sau khi tách hết có thể; median 142 token, p90 ~453. Riêng FAQ: 52 chunk (49 câu gốc + 3 câu bị tách vì quá dài), median 152, p90 417 — khớp sát số đo cũ (median 160, p90 415) dù tokenizer và pipeline đã đổi.
+
 ## Khi nào cập nhật file này
 
 Chỉ khi đổi **hợp đồng** giữa module (thêm/bớt field, đổi kiểu). Đổi số trong `config/default.toml` không cần sửa file này — đó là việc của Bước 9 bake-off.

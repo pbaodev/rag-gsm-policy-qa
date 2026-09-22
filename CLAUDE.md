@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository state
 
-All 10 brainstorm docs (`docs/learning/00`–`09`) are done and the module architecture is fixed in `docs/kien-truc-code.md`. Code has started: the `ingest` module (`rag_gsm/ingest/`) is real and working against live greensm.com data. `chunk`, `index`, `retrieve`, `generate`, `ui`, `eval` are not written yet — their contracts exist as `Protocol`/dataclass stubs in `rag_gsm/schemas.py` but no implementation.
+All 10 brainstorm docs (`docs/learning/00`–`09`) are done and the module architecture is fixed in `docs/kien-truc-code.md`. Code has started: `ingest` (`rag_gsm/ingest/`) and `chunk` (`rag_gsm/chunk/`) are real, working against live greensm.com data, and produce `data/chunks/*.jsonl` (337 chunks / 18 documents). `index`, `retrieve`, `generate`, `ui`, `eval` are not written yet — their contracts exist as `Protocol`/dataclass stubs in `rag_gsm/schemas.py` but no implementation.
 
 Check `CAPABILITY-MAP.md`'s progress table and `docs/kien-truc-code.md` before assuming a design question is open — most are already decided there, with reasons and rejected alternatives.
 
@@ -19,9 +19,10 @@ uv sync                                  # install deps into .venv (Python 3.12 
 uv run pytest                            # run all tests (currently ingest-only, no network)
 uv run pytest tests/test_heading.py -v   # run one test file
 uv run python -m rag_gsm.ingest.run      # fetch live greensm.com JSON, write data/markdown/*.md
+uv run python -m rag_gsm.chunk.run       # read data/markdown/*.md, write data/chunks/<doc_id>.jsonl
 ```
 
-`data/` and `.venv/` are working state, not committed source — `uv run python -m rag_gsm.ingest.run` regenerates `data/markdown/` from the live site any time.
+`data/` and `.venv/` are working state, not committed source — `uv run python -m rag_gsm.ingest.run` regenerates `data/markdown/` from the live site any time; `uv run python -m rag_gsm.chunk.run` regenerates `data/chunks/` from `data/markdown/` (no network needed for this one).
 
 ## Working on the learning docs
 
@@ -53,13 +54,18 @@ Still open: the "E-Green wallet" terms page from the original inventory no longe
 
 ### Locked-in stack
 
-Core logic (RRF, fallback threshold, context reorder, prompt + citation assembly) is hand-written on purpose; libraries only for parsers, embedding, vector store and BM25. **No LangChain, no LlamaIndex.** Fetching is `httpx` reading `__NEXT_DATA__` JSON directly (DOM/`BeautifulSoup` scraping and Crawl4AI are fallbacks for the rare page without JSON, not the main path); conversion/OCR is Docling; embedding is bge-m3 via sentence-transformers (local, MPS); storage is LanceDB (cosine, flat scan, no ANN) plus bm25s; the LLM sits behind a thin adapter (Ollama `qwen3:4b` in dev, Claude API when quality matters).
+Core logic (RRF, fallback threshold, context reorder, prompt + citation assembly) is hand-written on purpose; libraries only for parsers, embedding, vector store and BM25. **No LangChain, no LlamaIndex.** Fetching is `httpx` reading `__NEXT_DATA__` JSON directly (DOM/`BeautifulSoup` scraping and Crawl4AI are fallbacks for the rare page without JSON, not the main path); conversion/OCR is Docling; embedding is bge-m3 via sentence-transformers (local, MPS); storage is LanceDB (cosine, flat scan, no ANN) plus bm25s; the LLM sits behind a thin adapter (Ollama `qwen3:4b` in dev, Claude API when quality matters). Token counting at chunk time uses the real bge-m3 tokenizer (`transformers.AutoTokenizer`, tokenizer-only — no torch pulled in) rather than a word→token estimate, since `docs/learning/02-chunking.md` already flagged the old estimate as provisional.
 
 ### Ingest gotchas (found by running against live data, not guessed)
 
 - **CMS rich-text fields mix in raw HTML.** Some `description`/answer strings contain `<strong>`, `<i>`, `<a href>` inline — inconsistently, not every document uses them for the same thing (e.g. `generalItems[0]`'s headings are bare `"1. TITLE"` lines, but `generalItems[2]`'s are `<strong>1. TITLE</strong>` — lose that and you silently lose that document's top-level headings). `heading.strip_inline_html()` runs before every heading match; call it (or `heading.classify_line`, which already calls it) rather than matching raw JSON strings.
 - Line breaks inside these JSON strings are literal `\r\n`, not markdown blank lines — `heading.split_lines()` handles this.
 - Don't assume a JSON field's shape from one example; `insuranceData.columns` looked like it should be a list of column defs and was actually a delimited string. Print/inspect the real fetched structure before writing a parser for a new page.
+
+### Chunk gotchas (found by running against live data, not guessed)
+
+- **`doi_tuong` boundaries only make sense at real khoản level.** Applying the label-boundary rule per *paragraph* to documents with no heading numbering at all (`phu-luc-01/13/15` — plain prose, e.g. a step-by-step user flow that naturally alternates "Người dùng làm X" / "Đối tác làm Y" mid-narrative) shredded a single coherent procedure into dozens of near-empty chunks. Fixed in `rules.py`: the label-boundary rule applies only when `node.children` came from real document numbering; headingless text is packed by size only, and `doi_tuong` is assigned *after* packing, for metadata/filtering, not as a hard boundary.
+- The introductory phrasing `02-chunking.md` expected the `doi_tuong` regex to key off ("Đối với Đối Tác", "Nếu Bạn là Người dùng") doesn't match how the real clauses are written (`"4.1. Người dùng phải tuân thủ..."`, `"4.2. Đối tác phải tuân thủ..."`). `label_doi_tuong()` instead checks for the *presence* of "đối tác" vs "người dùng"/"khách hàng" in the clause's own text.
 
 ### Invariants any implementation must hold
 
@@ -81,12 +87,16 @@ These were each paid for with a measurement or a bug, and they cut across module
 ```
 rag_gsm/schemas.py                Document, Chunk, Embedder/LLMAdapter protocols, etc. — shared contracts, see docs/kien-truc-code.md
 rag_gsm/ingest/                   web.py (fetch + __NEXT_DATA__, now also saves raw HTML to data/raw/web/), heading.py, normalize.py, extractors/{general,privacy,insurance,faq}.py, run.py
+rag_gsm/chunk/                    loader.py (read data/markdown/*.md back into Document), rules.py, run.py
 data/raw/{web,images,internal}/   originals — web/ populated (4 HTML files) by ingest/web.py; images/ and internal/ not populated yet (no OCR, no internal docs yet)
 data/markdown/<doc_id>.md         derived, with YAML front matter (source, doc_type, audience, nguon_tin_cay, fetched_at, content_hash, ngay_hieu_luc) — regenerate with `uv run python -m rag_gsm.ingest.run`
-data/chunks/<doc_id>.jsonl        chunker output, index input — not built yet (next module)
+data/chunks/<doc_id>.jsonl        chunker output, index input — regenerate with `uv run python -m rag_gsm.chunk.run` (337 chunks / 18 documents as of 2026-09-22)
 index/public/{lancedb,bm25}/      dense table + BM25 index — not built yet
 ```
 
 ## Known loose ends
 
-- `docs/learning/02-chunking.md`'s per-document token stats (median/p90 for "Quy định chung") were measured before the 2026-09-22 correction, i.e. only on `generalItems[0]` ("Điều khoản sử dụng") — not on the other 15 appendices that turned out to also exist. Not yet re-measured; treat those specific numbers as provisional until chunking is actually implemented.
+- OCR pipeline for "Quy chế hoạt động" (56 images, needs Docling + an OCR-engine bake-off per `docs/learning/01-ingestion.md`) — not started.
+- "Điều khoản ví E-Green" — page not found at its documented URL nor inside `generalItems`; still unresolved.
+- Whether/how to index the 3,774 news articles — not decided.
+- The 14-section privacy notice (`chinh-sach-du-lieu-ca-nhan`) mixes many subject categories (customers, staff, shareholders, partners) that don't map cleanly onto the `nguoi_dung`/`doi_tac`/`chung` split `doi_tuong` labelling was designed for (that split is really about "Quy định chung" mixing customer vs. partner *obligations*). `chunk_dieu_khoan()` still runs the same regex on it; spot-check its labelling before trusting it for retrieval filtering.

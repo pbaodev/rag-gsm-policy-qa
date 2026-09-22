@@ -18,7 +18,7 @@ Ngưỡng đứng trên **điểm rerank**, không phải điểm RRF (điểm t
 | Độ sâu trước khi gộp | Top-20 mỗi nhánh (dense, BM25) | Đủ rộng để không bỏ sót ứng viên đúng trước khi rerank tinh; corpus vài trăm–vài nghìn chunk nên rẻ. Số khởi đầu, chỉnh bằng eval |
 | Trọng số RRF | **Không trọng số** (hai nhánh bằng nhau) | RRF gốc không trọng số; ít tham số phải đoán trước khi có baseline để so. Thêm trọng số sau nếu eval cho thấy một nhánh nên mạnh hơn |
 | Model rerank mặc định | **AITeamVN/Vietnamese_Reranker** (Apache-2.0, 0,6B, tinh chỉnh từ bge-reranker-v2-m3) | Tinh chỉnh tiếng Việt trên 1,1 triệu triplet; max 2304 token (256 câu hỏi + 2048 văn bản) — vượt hẳn cỡ chunk ~500 token của ta, không rủi ro cắt |
-| Cách chạy | **sentence-transformers `CrossEncoder`** | Đã có sentence-transformers trong stack từ Bước 3; model cùng đầu `AutoModelForSequenceClassification` như bge-reranker-v2-m3 nên tải thẳng, không thêm dependency mới |
+| Cách chạy | ~~sentence-transformers `CrossEncoder`~~ → **`AutoModelForSequenceClassification` trực tiếp** (sửa 2026-09-22) | Dự kiến ban đầu: đã có sentence-transformers từ Bước 3, tải thẳng không thêm dependency. **Chạy thật bị lỗi** — xem "Rủi ro" và `docs/kien-truc-code.md` mục "Bug thật" |
 | Số ứng viên vào rerank | Top-10 sau RRF | Cross-encoder tốn hơn embedding nhiều lần (chạy từng cặp câu hỏi–chunk); corpus nhỏ nên 10 đủ. Số khởi đầu, chỉnh bằng eval |
 | Chuẩn hoá điểm rerank | Sigmoid → [0, 1] | Điểm thô của reranker họ BGE không có thang cố định; ngưỡng fallback cần một thang so sánh được, giống lý do ngưỡng dense phải hiệu chỉnh theo model ở Bước 3 |
 | Mốc trần API (reranker) | **Không thêm** | Corpus nhỏ, chưa có API key trong môi trường; Bước 3 đã có mốc trần riêng cho embedding, không cần thêm ở bước này |
@@ -54,7 +54,7 @@ Ngưỡng đứng trên **điểm rerank**, không phải điểm RRF (điểm t
 - AITeamVN/Vietnamese_Reranker tự đo trên Legal Zalo 2021 (miền pháp luật), không phải GSM: số liệu chỉ có tính tham khảo, phải đo lại trên eval GSM (Bước 9), giống cảnh báo đã ghi cho AITeamVN/Vietnamese_Embedding ở Bước 3.
 - Hai bản tinh chỉnh tiếng Việt (AITeamVN, ViRanker) đo trên hai benchmark khác nhau (Legal Zalo vs MS MARCO VN dịch): không so trực tiếp được với nhau, chỉ so được với cùng baseline (bge-reranker-v2-m3) trong bài đo của chính mỗi bên.
 - Chưa đo latency thật của cross-encoder trên máy 16 GB khi chạy song song với LLM local (`qwen3:4b`) — cross-encoder tốn hơn embedding nhiều lần vì chạy từng cặp câu hỏi–chunk; cần đo trước khi chốt top-N vào rerank.
-- Chưa xác nhận `sentence-transformers.CrossEncoder` tải thẳng được AITeamVN/Vietnamese_Reranker không lỗi — suy luận từ việc nó dùng cùng đầu `AutoModelForSequenceClassification` như bge-reranker-v2-m3, cần thử khi cài.
+- ~~Chưa xác nhận `sentence-transformers.CrossEncoder` tải thẳng được AITeamVN/Vietnamese_Reranker không lỗi~~ — **sửa 2026-09-22: đã thử, đúng là lỗi.** Repo này không có sẵn `tokenizer.json` (chỉ có `sentencepiece.bpe.model` thô, khác bge-reranker-v2-m3), và `transformers` 5.17.0 (pin vì sentence-transformers 6.1.0 đòi `>=5,<6`) đoán nhầm file đó là tiktoken khi tự chuyển đổi — lỗi với mọi tokenizer class, kể cả khi đã cài `sentencepiece`/`tiktoken`. Không hạ được `transformers` xuống `<5` (xung đột cứng với sentence-transformers 6.1.0). Sửa bằng cách convert tokenizer một lần qua môi trường tạm (`uv run --with "transformers<5"`), cache theo máy, rồi dùng thẳng `AutoModelForSequenceClassification` (không qua `CrossEncoder`) — chi tiết ở `docs/kien-truc-code.md`. Model vẫn giữ nguyên là AITeamVN/Vietnamese_Reranker, chỉ đổi cách nạp tokenizer.
 - k=60, top-20 mỗi nhánh, top-10 vào rerank đều là điểm khởi đầu theo quy ước, chưa đo trên corpus GSM.
 
 ## Bài học
@@ -63,6 +63,7 @@ Ngưỡng đứng trên **điểm rerank**, không phải điểm RRF (điểm t
 - Giới hạn token là ràng buộc cứng thứ hai sau embedding: reranker 512 token (ViRanker, và ví dụ dùng của bge-reranker-v2-m3) mang cùng rủi ro cắt im lặng đã thấy ở Bước 3; đây là lý do chính chọn AITeamVN (2304 token) thay vì mặc định theo độ nổi tiếng của bge-reranker-v2-m3.
 - Benchmark tự công bố của các bản tinh chỉnh chỉ so được với baseline trong cùng bài đo của chính họ, không so chéo được giữa hai bài đo khác tập dữ liệu.
 - Cross-encoder và bi-encoder (embedding) cần xử lý runtime khác nhau (điểm thô cần sigmoid, chạy theo cặp thay vì theo lô độc lập): giữ nguyên nguyên tắc Bước 3 — giấu chi tiết đó sau một interface, không để lộ ra retrieval logic.
+- **(2026-09-22)** Một model "cùng họ, cùng đầu model" với model đã kiểm chứng (AITeamVN tinh chỉnh từ bge-reranker-v2-m3) không có nghĩa là *nạp được* giống nhau — chỉ riêng việc thiếu 1 file (`tokenizer.json`) trong repo đã đủ gây lỗi thật trên phiên bản thư viện đang dùng. Ghi rủi ro "chưa thử" là đúng hướng, nhưng chỉ có giá trị nếu thật sự quay lại thử trước khi code, không phải khi code xong mới phát hiện.
 
 ## Tham khảo
 

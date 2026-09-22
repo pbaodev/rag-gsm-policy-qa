@@ -26,7 +26,8 @@ rag_gsm/
     build.py                # dựng lại index/public, index/internal từ data/chunks
   retrieve/
     hybrid.py                # RRF
-    rerank.py                  # CrossEncoder wrapper
+    rerank.py                  # AutoModelForSequenceClassification wrapper (không phải CrossEncoder - xem "Bug thật" dưới)
+    _tokenizer_repair_script.py  # sửa tokenizer.json thiếu cho AITeamVN/Vietnamese_Reranker, chạy qua `uv run --with`
     fallback.py                 # outline + LLM chọn node (PageIndex)
     reorder.py                   # sandwich
   generate/
@@ -253,6 +254,25 @@ Thêm `config/default.toml` + `rag_gsm/config.py` (đọc bằng `tomllib`) th�
 4. `build.py` — đọc `data/chunks/*.jsonl`, tách theo `audience` (`khach_hang`→`index/public/`, `noi_bo`→`index/internal/`) **trước khi** embed/build — cách ly bằng cấu trúc chứ không chỉ bằng cột lọc, đúng invariant CLAUDE.md. ✅ Xong.
 
 Kiểm tra bằng tay trên dữ liệu thật: câu "hủy chuyến xe có bị trừ tiền không" — BM25 ra `faq#3.6` rồi `faq#2.16` sát nhau (khớp đúng ca hòa điểm đã ghi ở `04-index.md`, dù corpus thật 337 chunk khác corpus thử nghiệm 161 chunk khi viết tài liệu đó).
+
+## Task list: `retrieve` (đã code, 2026-09-22)
+
+Bước 5 và 6 đã brainstorm xong từ trước (`05-retrieval.md`, `06-pageindex-fallback.md`); phần "reorder" của Bước 7 nằm ở `retrieve/reorder.py` theo đúng cây thư mục (phần generation/citation của Bước 7 vẫn thuộc `generate/`, chưa code).
+
+1. `reorder.py` — sandwich reorder, thuần sắp xếp, không phụ thuộc gì. ✅ Xong, có test (khớp đúng ví dụ K=3 trong `07-reorder-generation-citation.md`).
+2. `hybrid.py` — RRF (k=60, không trọng số, top-20/nhánh). BM25 (bm25s) không hỗ trợ prefilter theo metadata như LanceDB — đây là một khoảng trống `05-retrieval.md` không nói tới; bù bằng cách lấy dư (top-N × 5) rồi lọc `doi_tuong` sau, chấp nhận được vì bm25s tính điểm chính xác trên toàn bộ từ vựng (không xấp xỉ như ANN) và corpus chỉ vài trăm chunk. ✅ Xong, có test.
+3. `rerank.py` — **đổi so với kế hoạch**: xem "Bug thật" dưới đây. ✅ Xong (dùng `AutoModelForSequenceClassification` thay vì `CrossEncoder`), có test cho phần logic (`rerank()`), chưa có test offline cho `VietnameseReranker` thật (cùng lý do `embedder.py`: cần tải model).
+4. `fallback.py` — outline (breadcrumb + N ký tự đầu) + `LLMAdapter.generate_json` + kiểm chứng trích dẫn nguyên văn (substring). Chỉ phụ thuộc `LLMAdapter` (Protocol trong `schemas.py`), **không** phụ thuộc `generate/llm_adapter.py` (chưa xây, đúng thứ tự build) — giấu Ollama/Claude sau interface, test bằng LLM giả. ✅ Xong, có test.
+
+### Bug thật tìm thấy khi chạy trên dữ liệu thật: `AITeamVN/Vietnamese_Reranker` không tải được qua `CrossEncoder`
+
+`05-retrieval.md` đã tự ghi rủi ro này trước khi biết kết quả ("Chưa xác nhận `sentence-transformers.CrossEncoder` tải thẳng được AITeamVN/Vietnamese_Reranker không lỗi") — chạy thật xác nhận **đúng là lỗi thật**, không tải được:
+
+- Repo `AITeamVN/Vietnamese_Reranker` chỉ có `sentencepiece.bpe.model` thô, **không có sẵn `tokenizer.json`** (khác `BAAI/bge-reranker-v2-m3`, có cả hai file).
+- `transformers` 5.17.0 (đang pin, vì `sentence-transformers` 6.1.0 đòi `transformers>=5,<6`) đoán nhầm file sentencepiece đó là định dạng tiktoken khi tự chuyển đổi sang fast tokenizer — lỗi ngay cả khi đã cài `sentencepiece` và `tiktoken`. Tái hiện được với mọi cách gọi (`AutoTokenizer`, `XLMRobertaTokenizer`, `XLMRobertaTokenizerFast`, có/không `use_fast`).
+- Hạ `transformers` xuống `<5` (bản này nạp tokenizer đúng, đã kiểm bằng `uv run --with "transformers<5" --with protobuf`) **không dùng được** vì xung đột cứng với `sentence-transformers` 6.1.0.
+- Cách sửa: dùng một môi trường tạm (`uv run --with "transformers<5" --with protobuf`, không đụng dependency chính) convert tokenizer sang `tokenizer.json` một lần, cache theo máy tại `~/.cache/rag_gsm/tokenizer_fix/`; nạp lại bình thường trên `transformers` 5.17.0 sau đó không lỗi (đã kiểm). `rerank.py` tự động chạy bước sửa này khi cần (`_ensure_fixed_tokenizer`), và dùng thẳng `AutoModelForSequenceClassification` + tokenizer đã sửa thay vì `sentence_transformers.CrossEncoder` (không còn "không thêm dependency mới" như dự kiến, nhưng không thêm dependency nào cả — `transformers` vốn đã có sẵn).
+- Đã kiểm điểm số ra hợp lý sau khi sửa: câu hỏi "hủy chuyến xe có bị trừ tiền không" với đoạn liên quan cho 0,79 (sigmoid), đoạn không liên quan cho 0,00009.
 
 ## Khi nào cập nhật file này
 

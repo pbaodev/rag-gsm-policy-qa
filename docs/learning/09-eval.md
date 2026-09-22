@@ -2,6 +2,8 @@
 
 Bước cuối, phụ thuộc `retrieve` (Bước 5–6) và `generate` (Bước 7). Đúng như Bước 0 đã ghi ("Bộ câu hỏi vàng, chạy lại sau mỗi module"), mục đích không chỉ là "chấm điểm cuối" — mà là công cụ để chốt mọi tham số mà các Bước 3–7 đã cố tình để ngỏ chờ đo.
 
+**Code thật 2026-09-22:** đã viết `rag_gsm/eval/{metrics,golden,judge,baseline,run}.py` và soạn `eval/golden_questions.jsonl` — 50 câu (đúng cận dưới mốc 50–100 đã chốt, có thể mở rộng thêm sau), mỗi câu nguồn gốc thật từ `data/chunks/*.jsonl` (đã kiểm bằng script, không câu nào trỏ tới `chunk_id` không tồn tại). Chạy thử thật (smoke test, 4 câu) phát hiện 2 điều: (1) `eval/run.py` ban đầu chỉ ghi kết quả ở cuối vòng lặp — một câu LLM timeout làm mất sạch tiến độ; sửa bằng ghi từng dòng ngay lập tức + bọc mỗi câu trong `try/except` để lỗi một câu không sập cả batch; (2) `qwen3:4b` (model generation mặc định lúc đó) quá chậm để chạy eval thực tế — đổi sang `qwen2.5:3b`, đo thật nhanh hơn 20–100 lần. Phát hiện quan trọng thứ ba, đúng lý do Bước 9 tồn tại: 2/4 câu có recall/MRR hoàn hảo sau rerank (chunk đúng đứng hạng 1) nhưng vẫn rơi vào "không biết" vì **điểm** rerank của chunk hạng 1 đó thấp hơn ngưỡng 0.5 — dấu hiệu thật đầu tiên cho thấy `thresholds.rerank_pass` cần hiệu chỉnh lại, chưa kết luận được vì mới 4/50 câu. Chưa chạy đủ 50 câu, và LLM-judge (Claude) chưa chạy lần nào vì môi trường dev chưa có `ANTHROPIC_API_KEY`. Xem `CLAUDE.md` mục "Eval gotchas".
+
 ## Chốt
 
 | Việc | Chọn | Vì sao |

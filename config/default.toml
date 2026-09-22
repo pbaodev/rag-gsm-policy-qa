@@ -18,11 +18,11 @@ final_k = 3
 reorder = true
 
 [fallback]
-model = "ollama:qwen3:4b"
+model = "ollama:qwen2.5:3b"
 excerpt_chars = 200
 
 [generation]
-model = "ollama:qwen3:4b"
+model = "ollama:qwen2.5:3b"
 temperature = 0.15
 
 [thresholds]

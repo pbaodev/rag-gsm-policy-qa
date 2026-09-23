@@ -59,6 +59,8 @@ Corpus: chính sách GSM cho khách hàng đi xe (FAQ, điều khoản, chính s
 - Chưa xem bảng thật của Bảo hiểm và Chính sách dữ liệu; chốt cách viết lại hàng sau khi xem.
 - Ngân sách token chỉ là điểm xuất phát.
 
+**Bug thật 2026-09-23 (tìm bằng cách kiểm tra `chunk_id` duy nhất trên TOÀN corpus, việc chưa ai làm trước đó):** `so_muc` (và do đó `chunk_id`) chỉ là con số/tiêu đề thô lấy từ heading — không đảm bảo duy nhất khi (a) một tài liệu có nhiều danh sách đánh số ĐỘC LẬP đều bắt đầu lại từ "1." (`phu-luc-14-tai-khoan-gia-dinh.md`: "Chủ tài khoản" 1-9, rồi "Thành viên" 1-5, ngăn cách bằng dòng chữ thường, không phải heading thật), hoặc (b) heading không có số thứ tự (gặp lần đầu khi OCR `quy-che-hoat-dong.md`). Hậu quả không chỉ là "id trùng" trên giấy — `chunk_lookup` (dict `chunk_id -> Chunk`, dùng ở `ui/app.py` và `generate/answer.py`) sẽ âm thầm ghi đè, khiến một trong hai khoản trùng id không bao giờ được trích dẫn đúng nếu nó được chọn. Sửa trong `rules.py`: dùng slug tiêu đề làm nền khi không có số, cộng thêm bước hậu kiểm `_dedupe_chunk_ids()` gắn hậu tố nếu vẫn trùng — xem CLAUDE.md mục "Chunk gotchas". Bài học: một invariant ("chunk id duy nhất") tưởng hiển nhiên vẫn cần một bài test thật kiểm tra nó trên toàn dữ liệu thật, không chỉ tin vào logic sinh id trông có vẻ đúng.
+
 ## Bài học
 
 - Số đo thật sửa ước lượng: mục cấp 1 trung vị 418 token nhưng đuôi dài tới 3,4k; khối cấp 2 trung vị chỉ 66 token. Gom khoản cấp 2 là cần thiết, không phải tùy chọn.

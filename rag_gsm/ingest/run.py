@@ -1,9 +1,9 @@
-"""Chay toan bo extractor JSON da co (general, privacy, insurance, faq) va
-ghi ra data/markdown/<doc_id>.md.
+"""Chay toan bo extractor JSON da co (general, privacy, insurance, faq,
+egreen) va ghi ra data/markdown/<doc_id>.md.
 
-Chua bao gom: OCR Quy che hoat dong (can Docling, viec rieng), Dieu khoan
-vi E-Green (chua tim lai duoc vi tri - xem docs/learning/01-ingestion.md),
-Hop dong dich vu (ngoai pham vi khach hang).
+Chua bao gom: OCR Quy che hoat dong (can Docling, viec rieng - xem
+rag_gsm/ingest/ocr_regulations.py), Hop dong dich vu (ngoai pham vi
+khach hang).
 
 Chay: uv run python -m rag_gsm.ingest.run
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rag_gsm.ingest import heading
-from rag_gsm.ingest.extractors import faq, general, insurance, privacy
+from rag_gsm.ingest.extractors import egreen, faq, general, insurance, privacy
 from rag_gsm.ingest.normalize import render_markdown_file
 from rag_gsm.schemas import Document
 
@@ -52,6 +52,13 @@ def main() -> None:
     n_h1 = sum(1 for ln in body_md.splitlines() if ln.startswith("# "))
     n_h2 = sum(1 for ln in body_md.splitlines() if ln.startswith("## "))
     print(f"  {doc.doc_id:38s} {len(body_md):7d} ky tu  {n_h1} danh muc, {n_h2} cau hoi")
+
+    print("== egreen (Dieu khoan ve The/Vi E-Green) ==")
+    doc, body_md = egreen.extract()
+    _write(doc, body_md)
+    warnings = heading.check_numbering_continuity(body_md)
+    flag = f"  !! {warnings[0]}" if warnings else ""
+    print(f"  {doc.doc_id:38s} {len(body_md):7d} ky tu{flag}")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ Corpus: chính sách GSM (Green SM) cho khách hàng đi xe. Nguồn chính là 
 | Hợp đồng dịch vụ | `/vn-vi/terms-policies/service-agreement` | JSON: `pageProps.serviceData.serviceItems[]`, cùng khuôn dạng | Chưa đo | Mở đầu (`serviceExcerpt`) ghi rõ áp dụng cho "Người Dùng ... và Đơn Vị Kinh Doanh Vận Tải" — vẫn có vẻ là hợp đồng vận hành giữa hai bên, không phải điều khoản một chiều cho khách; giữ nguyên kết luận "ngoài phạm vi", chỉ sửa URL |
 | Quy chế hoạt động | `/vn-vi/terms-policies/regulations` | **56 ảnh JPG** (`quychehoatdong-1…56`) | — | Kiểm lại `pageProps`: chỉ có `_nextI18Next`, không có text. Kết luận OCR không đổi, chỉ sửa URL |
 | Bảo hiểm khách hàng | `/vn-vi/bao-hiem-khach-hang` | JSON: `pageProps.insuranceData.{columns, rows}` | ~1,1k | Đúng như bản trước — bảng sạch trong JSON |
-| Điều khoản ví E-Green | *(chưa tìm lại được)* | — | — | URL `/e-green-wallet-payment-terms` không còn trong sitemap; tìm cả 16 `generalItems` không thấy nhắc "E-Green" hay "Ví". Có thể đã gộp/đổi tên/gỡ bài — **chưa loại khỏi phạm vi, cần xác nhận lại trước khi ingest** |
+| Điều khoản ví E-Green | **Tìm lại được 2026-09-23** — `/vn-vi/terms-policies/e-green-wallet-payment-terms` | JSON: `pageProps.serviceData.serviceExcerpt`, một chuỗi HTML+`\r\n` dài (**không phải** `serviceItems[]` như Hợp đồng dịch vụ — `serviceItems` ở đây là `null`) | ~3.400 | URL cũ (`/e-green-wallet-payment-terms`, không có `/vn-vi/terms-policies/` phía trước) là 404 — không phải trang đã biến mất, chỉ là đoán sai khuôn URL. Nội dung ("ĐIỀU KHOẢN VỀ THẺ E-GREEN") viết hoàn toàn cho Khách Hàng, không nhắc "đối tác" — vào phạm vi |
 | FAQ | `/vn-vi/helps` | JSON: `contentFaq.setUpFaq` | ~2,5k (DOM) | Kiểm lại, số liệu không đổi: 4 nhóm, 136 Q&A; "Dành cho người dùng" 49 câu/6 danh mục |
 | Tin tức | `/vn-vi/news/*` | Text, có ngày | 3.774 bài | Không đổi |
 
@@ -61,7 +61,7 @@ Sửa 2026-09-22: "Quy định chung" không còn là 1 dòng — tách thành 1
 | FAQ "Dành cho người dùng" (49 câu) | Có | Đọc JSON `contentFaq.setUpFaq` |
 | Bảo hiểm khách hàng (Green SM Care) | Có | Đọc JSON `insuranceData.{columns, rows}` |
 | Quy chế hoạt động (56 ảnh) | Có | Tải ảnh → Docling + OCR local |
-| Điều khoản ví E-Green | Tạm hoãn | URL cũ không còn; chưa tìm thấy vị trí mới — xác nhận trước khi ingest, không tự ý bỏ khỏi phạm vi |
+| Điều khoản ví E-Green | Có (sửa 2026-09-23) | Tìm lại được đúng URL, đọc JSON `serviceData.serviceExcerpt`, mỗi phần tử một tài liệu — xem `rag_gsm/ingest/extractors/egreen.py` |
 | Hợp đồng dịch vụ | Không | Mở đầu ghi rõ áp dụng cho "Đơn Vị Kinh Doanh Vận Tải"; thêm lại nếu bạn muốn |
 | FAQ tài xế Taxi (15), tài xế Bike (26), Nhà hàng (46) | Không | Ngoài phạm vi khách hàng; có sẵn trong cùng JSON nếu cần |
 | Tin tức (3.774 bài) | Chưa quyết | Bạn chọn "tính sau" |
@@ -81,6 +81,7 @@ chinh-sach-du-lieu-ca-nhan             privacyNotice (trang riêng)
 bao-hiem-khach-hang                    insuranceData
 faq                                     contentFaq (giữ tên như Bước 2 đã dùng: faq#3.6)
 quy-che-hoat-dong                       56 ảnh OCR
+dieu-khoan-vi-e-green                   serviceData.serviceExcerpt (trang riêng)
 ```
 
 `doc_type` cho toàn bộ nhóm `generalItems`: `dieu_khoan` (khớp Bước 2). Mọi phụ lục vẫn cần gắn `doi_tuong` theo khoản như đã quyết ở Bước 2 — phụ lục 15 tự nhắc tới "Tài Xế, Đối Tác, Thương Nhân" nên chắc chắn có khoản không phải `nguoi_dung`.
@@ -156,8 +157,8 @@ Cây PageIndex khi đó chính là khung của tài liệu.
 
 ## Cần kiểm chứng khi làm
 
-- Bake-off OCR trên 3–5 ảnh trong 56 ảnh của Quy chế: đo tỉ lệ ký tự sai, soi dấu tiếng Việt.
-- Tìm lại Điều khoản ví E-Green: thử sitemap các locale khác, thử tìm trong nav/footer của trang chủ, hoặc hỏi trực tiếp — đừng đoán nó đã bị gộp vào phụ lục nào mà không có bằng chứng.
+- ~~Bake-off OCR trên 3–5 ảnh trong 56 ảnh của Quy chế~~ — **xong 2026-09-23**: Docling + `OcrMacOptions` (Apple Vision, có sẵn macOS) thắng rõ EasyOCR (chậm, lộn thứ tự đọc) và RapidOCR mặc định (gần mất hết dấu, model tiếng Trung); quirk thật cần biết: Vision báo tiếng Việt là `"vi-VT"`, không phải `"vi"`/`"vi-VN"` chuẩn. Chạy OCR thật cả 56 trang lộ ra phát hiện lớn hơn: đây không phải văn bản đồng nhất — phần lớn (trang ~2-42, 47-51) là bảng hướng dẫn từng bước kèm ảnh chụp màn hình (cả khách hàng lẫn tài xế), và OCR theo trang của Docling **mất trắng chữ** ở 17/56 trang dạng này (lỗi phân loại layout, không phải lỗi dấu). Quyết định (hỏi ý chủ dự án): chỉ OCR/index phần văn bản pháp lý đáng tin cậy (trang 1-2, 43-46, 52-56 — 11/56 trang), bỏ hẳn phần hướng dẫn từng bước vì phần lớn đã có sẵn sạch hơn trong FAQ. Xem `rag_gsm/ingest/ocr_regulations.py` và CLAUDE.md mục "OCR gotchas" cho đầy đủ.
+- ~~Tìm lại Điều khoản ví E-Green~~ — **xong 2026-09-23**: thử trực tiếp khuôn URL `/vn-vi/terms-policies/<slug>` (giống các trang khác đã xác nhận) thay vì chỉ tìm trong `generalItems`/nav — ra ngay `/vn-vi/terms-policies/e-green-wallet-payment-terms`, HTTP 200, nội dung thật.
 - Đọc toàn văn Phụ lục 7/8/9 (thuê xe, vận tải trả sau/trả trước) để xác nhận có điều khoản hoàn tiền hay không — mới đọc ~280 ký tự đầu mỗi phụ lục, chưa đủ để kết luận.
 - Xác nhận `generalItems[12]` và `privacyItems[]` giống nhau đến mức nào (đã thấy đoạn mở đầu giống hệt, chưa so toàn văn) trước khi quyết định bỏ hẳn `generalItems[12]`.
 - Trafilatura/`fit_markdown` không còn cần thiết cho các trang đã xác nhận có JSON; chỉ còn đáng thử nếu sau này gặp trang thật sự phải cạo DOM.
@@ -182,3 +183,4 @@ Cây PageIndex khi đó chính là khung của tài liệu.
 - Giữ file gốc, vì OCR là bước tốn thời gian nhất và không nên chạy lại.
 - **(2026-09-22)** Kết luận "không có" khó hơn kết luận "có": tìm một cụm từ, không thấy, rồi kết luận "trang này không có toàn văn trong JSON" là kiểu suy luận từ một mẫu âm tính — cùng lỗi với bài học FAQ ở trên nhưng ngược chiều. Phải duyệt hết cấu trúc (`json.dumps` rồi tìm key, hoặc đệ quy qua toàn bộ `dict`/`list`) trước khi kết luận một nguồn "không tồn tại".
 - Một URL trong tài liệu cũ có thể đã lệch khỏi thực tế (ví dụ `/privacy-notice` → `/terms-policies/privacy-notice`) dù nội dung nó mô tả vẫn đúng hướng — luôn tự tay xác nhận URL bằng sitemap thật ngay trước khi viết code gọi vào nó, không tin URL đã ghi trong tài liệu brainstorm.
+- **(2026-09-23, xác nhận đúng bài học trên)** "Điều khoản ví E-Green" tưởng đã biến mất suốt một ngày chỉ vì thử đúng URL cũ (`/e-green-wallet-payment-terms`, thiếu tiền tố) — thử lại đúng khuôn `/vn-vi/terms-policies/<slug>` đã xác nhận đúng cho 5 trang khác thì ra ngay, HTTP 200, nội dung thật. Kết luận "trang không còn tồn tại" cần thử hết các biến thể khuôn URL đã biết đúng, không chỉ thử lại đúng URL cũ một lần nữa. Ngoài ra JSON của trang này lại dùng `serviceExcerpt` (chuỗi dài) chứ không phải `serviceItems[]` như trang Hợp đồng dịch vụ dù cùng field gốc `serviceData` — thêm một lần nữa xác nhận bài học "không đoán hình dạng JSON từ tên field giống nhau, phải đọc thật".

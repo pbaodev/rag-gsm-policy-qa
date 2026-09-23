@@ -13,6 +13,7 @@ from __future__ import annotations
 from rag_gsm.chunk.rules import (
     chunk_bao_hiem,
     chunk_dieu_khoan,
+    chunk_document,
     chunk_faq,
     label_doi_tuong,
 )
@@ -137,6 +138,55 @@ def test_faq_oversized_answer_splits_and_stays_under_budget():
     assert all(c.token_count <= 500 for c in chunks)
     assert chunks[0].chunk_id == "test-doc#1.1-a"
     assert chunks[1].chunk_id == "test-doc#1.1-b"
+
+
+def test_restarted_numbering_across_sections_gets_unique_chunk_ids():
+    """Bug that 2026-09-23, tim thay tren data/markdown/phu-luc-14-*.md
+    that: van ban co 2 danh sach doc lap deu danh so lai tu # 1. ("Chu
+    tai khoan" va "Thanh vien") - truoc khi sua, ca hai deu ra chunk_id
+    "test-doc#1", ghi de nhau trong chunk_lookup (dict chunk_id->Chunk
+    dung o ui/app.py, generate/answer.py) khien mot khoan khong bao gio
+    duoc trich dan dung."""
+    body = """Điều kiện áp dụng cho Chủ tài khoản:
+
+# 1. Chủ tài khoản chịu trách nhiệm về hoạt động của mình.
+
+Điều kiện áp dụng cho Thành viên:
+
+# 1. Thành viên chịu trách nhiệm về hoạt động của mình."""
+
+    chunks = chunk_document(_doc("dieu_khoan"), body)
+
+    ids = [c.chunk_id for c in chunks]
+    assert len(ids) == len(set(ids)), f"chunk_id trung: {ids}"
+
+
+def test_unnumbered_heading_gets_slug_not_none_in_breadcrumb():
+    """Bug that 2026-09-23, tim thay khi OCR quy-che-hoat-dong.md: heading
+    khong danh so (vd "Quy trình đổi trả hàng và hoàn tiền") lam so_muc
+    la None. Truoc khi sua: nhieu nhom nhu vay trong cung tai lieu deu
+    ra chunk_id "<doc>" (tran, dam nhau) hoac breadcrumb hien chu
+    "None-None" khi gop nhieu nhom lai."""
+    long_para = " ".join(
+        f"Đây là câu số {i} trong một điều khoản dài không được đánh số thứ tự."
+        for i in range(1, 80)
+    )
+    body = f"""# B. Quy trình giao dịch
+
+## Quy trình đổi trả hàng và hoàn tiền
+
+{long_para}
+
+## Quy trình giải quyết tranh chấp
+
+{long_para}"""
+
+    chunks = chunk_dieu_khoan(_doc("dieu_khoan"), body)
+
+    ids = [c.chunk_id for c in chunks]
+    assert len(ids) == len(set(ids)), f"chunk_id trung: {ids}"
+    assert all("None" not in c.chunk_id for c in chunks)
+    assert all("None" not in c.breadcrumb for c in chunks)
 
 
 def test_insurance_table_is_one_chunk_with_row_sentences():

@@ -49,3 +49,12 @@ def test_empty_chunks_gives_empty_citation_map():
 def test_system_prompt_mentions_citation_bracket_example():
     system, _, _ = build_prompt("cau hoi", [])
     assert "[1]" in system
+
+
+def test_system_prompt_forbids_bare_citation_only_answer():
+    """Bug that (2026-09-23): qwen2.5:3b tra loi CHI bang "[1]" (khong co
+    cau van nao) khi system prompt chi neu "[1]" nhu mot vi du dinh dang -
+    model pattern-match vao vi du thay vi viet cau tra loi. Sua bang cau
+    cam ro rang; test nay giu invariant do khong bi go bo lai."""
+    system, _, _ = build_prompt("cau hoi", [])
+    assert "trơ trọi" in system

@@ -2,6 +2,10 @@
 
 Module cuối, phụ thuộc `generate` (Bước 7). Hai việc: giao diện chat như khách hàng thật sẽ dùng, và một trace panel để quan sát nội bộ từng lượt truy vấn — công cụ chính để soi pipeline bằng mắt song song với eval tự động (Bước 9). Chạy local (Bước 0), không host công khai.
 
+**Code thật 2026-09-22:** đã viết `rag_gsm/ui/app.py` đúng theo thiết kế bên dưới (expander trace dưới mỗi câu, `st.cache_resource` cho model/kết nối, `st.session_state` cho lịch sử, single-turn). Môi trường dev không có trình duyệt nên xác nhận bằng `streamlit.testing.v1.AppTest` (chạy thật script, giả lập nhập câu hỏi) thay vì mở tay: nhánh hybrid và nhánh "không biết" đều render đúng trên dữ liệu thật, không crash. Xác nhận thêm: expander lồng nhau (mục "Prompt thô" bên dưới) hoạt động bình thường trên Streamlit 1.64.0 — không cần phương án dự phòng nào khác.
+
+**Bug thật + bài học kiểm chứng (2026-09-22, ngay sau):** chủ dự án chạy `uv run streamlit run rag_gsm/ui/app.py` thật thì gặp `ModuleNotFoundError: No module named 'rag_gsm'` — điều mà lần "xác nhận" ở trên không hề bắt được. Lý do: `AppTest` chạy đúng script thật, nhưng lần đầu tôi còn tự kiểm bằng `curl` vào server thật lại KHÔNG kiểm chứng được gì — `curl` chỉ chạm trang tĩnh, script Python chỉ thực sự chạy khi có WebSocket thật từ trình duyệt kết nối. Sửa đúng gốc: `app.py` tự chèn thư mục gốc dự án vào `sys.path` ở đầu file (không dựa vào việc cài package hay cách gọi lệnh), rồi xác nhận lại bằng đúng `AppTest` nhưng chạy từ ngoài thư mục dự án, không đặt `PYTHONPATH` — tái hiện được lỗi cũ trước khi sửa, và qua sạch sau khi sửa. Bài học: kiểm tra "server sống" (HTTP 200) không phải bằng chứng code chạy đúng; phải có thứ thực sự thực thi được đường code cần kiểm.
+
 **Đã xác nhận lại framework** (thảo luận trước khi viết doc này): giữ **Streamlit**, so với Gradio (hợp demo model đơn giản hơn là dashboard nhiều bảng) và Chainlit (có `@cl.step` dựng cây bước sẵn, nhưng chỉ tự động khi dùng LangChain/LlamaIndex — pipeline này tự viết lõi nên vẫn phải tự gắn bước thủ công, mất lợi thế đó). Streamlit mạnh hơn ở đúng thứ trace panel cần: bảng, biểu đồ, sidebar, expander.
 
 ## Sơ đồ

@@ -27,7 +27,8 @@ chinh van ban khoan, khong dua vao cum dan nhap co dinh.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+import unicodedata
+from dataclasses import dataclass, field, replace
 
 from rag_gsm.schemas import Chunk, Document
 
@@ -36,8 +37,19 @@ BUDGET_TOKENS = 500
 _HEADING_RE = re.compile(r"^(#{1,3})\s+(?:(\d+(?:\.\d+){0,2})\.\s+)?(.*)$")
 _DOI_TAC_RE = re.compile(r"đối\s*tác", re.IGNORECASE)
 _NGUOI_DUNG_RE = re.compile(r"(người\s*dùng|khách\s*hàng)", re.IGNORECASE)
+_NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 _tokenizer = None
+
+
+def _slugify(text: str) -> str:
+    """Fallback duy nhat hoa cho so_muc khi heading khong co so thu tu
+    (vd tieu de chu cai "A."/"D." trong quy-che-hoat-dong.md, OCR - xem
+    Bug that 2026-09-23 duoi day). Khong dung cho tieu de co so - nhung
+    van con giu duoc dang '<doc>#<gi do co the doc>' cho chunk_id."""
+    text = unicodedata.normalize("NFKD", text.replace("đ", "d").replace("Đ", "D"))
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return _NON_SLUG_RE.sub("-", text.lower()).strip("-") or "doan"
 
 
 def count_tokens(text: str) -> int:
@@ -212,7 +224,14 @@ def _breadcrumb(root: str, group: Node, leaves: list[Node]) -> str:
         elif leaf.so_muc:
             parts.append(leaf.so_muc)
     else:
-        parts.append(f"{leaves[0].so_muc}-{leaves[-1].so_muc}")
+        first, last = leaves[0], leaves[-1]
+        if first.so_muc and last.so_muc:
+            parts.append(f"{first.so_muc}-{last.so_muc}")
+        elif first.title and last.title:
+            # Khong co so_muc (vd tieu de chu cai/khong danh so - phat hien
+            # 2026-09-23 khi OCR quy-che-hoat-dong.md co heading khong danh
+            # so): tung ra "None-None" neu dung nguyen f-string tren so_muc.
+            parts.append(first.title if first.title == last.title else f"{first.title} - {last.title}")
     return " › ".join(parts)
 
 
@@ -252,8 +271,11 @@ def _build_chunk(
 def _make_chunk_from_leaves(
     doc: Document, root: str, group: Node, leaves: list[Node], doi_tuong: str
 ) -> Chunk:
-    first_so_muc = leaves[0].so_muc or "1"
-    last_so_muc = leaves[-1].so_muc or "1"
+    # Fallback la slug tieu de, khong phai chuoi "1" co dinh (bug that
+    # 2026-09-23 - xem _split_oversized_leaf): "1" co dinh lam nhieu nhom
+    # tieu de khac nhau khong danh so trong cung tai lieu dam chunk_id.
+    first_so_muc = leaves[0].so_muc or _slugify(leaves[0].title)
+    last_so_muc = leaves[-1].so_muc or _slugify(leaves[-1].title)
     so_muc = first_so_muc if len(leaves) == 1 else f"{first_so_muc}-{last_so_muc}"
     text = "\n\n".join(subtree_text(l) for l in leaves)
     breadcrumb = _breadcrumb(root, group, leaves)
@@ -269,14 +291,22 @@ def _make_chunk_from_leaves(
 
 
 def _split_oversized_leaf(doc: Document, root: str, group: Node, leaf: Node, doi_tuong: str) -> list[Chunk]:
+    """Bug that 2026-09-23 (phat hien khi OCR quy-che-hoat-dong.md - vien
+    dau tien co heading cap 1 KHONG danh so, vd "Quy trinh doi tra hang
+    va hoan tien"): `leaf.so_muc` la None cho cac tieu de kieu nay, va
+    truoc day so_muc duoc gan thang la None trong truong hop do - moi
+    manh cua MOI leaf khong danh so deu ra chung chunk_id = doc.doc_id
+    (dam nhau, vi pham invariant "chunk id duy nhat" o CLAUDE.md). Sua
+    bang cach dung slug cua tieu de lam goc thay vi None."""
     if leaf.children:
         return chunk_dieu_khoan_group(doc, root, leaf)
     paras = [p for p in subtree_text(leaf).split("\n\n") if p.strip()]
     pieces = _pack_texts(paras, BUDGET_TOKENS)
+    base = leaf.so_muc or _slugify(leaf.title)
     chunks = []
     for i, piece in enumerate(pieces):
         suffix = chr(ord("a") + i)
-        so_muc = f"{leaf.so_muc}-{suffix}" if leaf.so_muc else None
+        so_muc = f"{base}-{suffix}"
         breadcrumb = _breadcrumb(root, group, [leaf])
         chunks.append(
             _build_chunk(
@@ -463,11 +493,35 @@ def chunk_bao_hiem(doc: Document, body_markdown: str) -> list[Chunk]:
     ]
 
 
+def _dedupe_chunk_ids(chunks: list[Chunk]) -> list[Chunk]:
+    """Bug that 2026-09-23, phat hien khi kiem tra duy nhat chunk_id tren
+    toan corpus (dong tac vu OCR quy-che-hoat-dong.md): phu-luc-14 danh
+    so 3 danh sach doc lap ("Chu tai khoan", "Thanh vien", "Doi tac") deu
+    bang # 1./2./3... tu dau - tao 2 cap chunk_id trung ("...#1" x2,
+    "...#2" x2, v.v.) vi so_muc chi la con so tho, khong biet no thuoc
+    danh sach nao. Day la loi CO THAT truoc gio (khong lien quan OCR) -
+    trung chunk_id nghia la `chunk_lookup` (dict chunk_id -> Chunk, dung
+    o ui/app.py, generate/answer.py) se am tham ghi de, khien mot trong
+    hai khoan khong bao gio duoc trich dan dung. Sua bang hau kiem: neu
+    trung, them hau to "-2"/"-3"... theo lan xuat hien, giu duy nhat ma
+    khong doan truoc cau truc nao gay trung."""
+    seen: dict[str, int] = {}
+    result = []
+    for c in chunks:
+        seen[c.chunk_id] = seen.get(c.chunk_id, 0) + 1
+        if seen[c.chunk_id] > 1:
+            c = replace(c, chunk_id=f"{c.chunk_id}-{seen[c.chunk_id]}")
+        result.append(c)
+    return result
+
+
 def chunk_document(doc: Document, body_markdown: str) -> list[Chunk]:
     if doc.doc_type == "faq":
-        return chunk_faq(doc, body_markdown)
-    if doc.doc_type == "bao_hiem":
-        return chunk_bao_hiem(doc, body_markdown)
-    if doc.doc_type in ("dieu_khoan", "chinh_sach"):
-        return chunk_dieu_khoan(doc, body_markdown)
-    raise ValueError(f"{doc.doc_id}: doc_type '{doc.doc_type}' chua co quy tac chunk")
+        chunks = chunk_faq(doc, body_markdown)
+    elif doc.doc_type == "bao_hiem":
+        chunks = chunk_bao_hiem(doc, body_markdown)
+    elif doc.doc_type in ("dieu_khoan", "chinh_sach"):
+        chunks = chunk_dieu_khoan(doc, body_markdown)
+    else:
+        raise ValueError(f"{doc.doc_id}: doc_type '{doc.doc_type}' chua co quy tac chunk")
+    return _dedupe_chunk_ids(chunks)

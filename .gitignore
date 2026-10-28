@@ -11,3 +11,6 @@ __pycache__/
 /data/
 /index/
 /eval/runs/
+
+# macOS
+.DS_Store
